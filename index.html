@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BlueStrike | Network Scanner</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ═══════════════════════════════ SIDEBAR ═══════════════════════════════ -->
+  <aside class="sidebar">
+
+    <div class="logo">
+      <div class="logo-mark">◉</div>
+      <div class="logo-text">Blue<span>Strike</span></div>
+    </div>
+
+    <div class="menu-title">SCANNER</div>
+    <nav id="mainNav">
+      <a class="menu-item active" data-page="port-scanner">
+        <span>⌕</span> Port Scanner
+      </a>
+      <a class="menu-item" data-page="host-discovery">
+        <span>◉</span> Host Discovery
+      </a>
+    </nav>
+
+    <div class="menu-title second-title">ANALYSIS</div>
+    <nav>
+      <a class="menu-item" data-page="network-map">
+        <span>⌗</span> Network Map
+      </a>
+    </nav>
+
+    <div class="menu-title second-title">MONITOR</div>
+    <nav>
+      <a class="menu-item" data-page="my-system">
+        <span>◈</span> My System
+      </a>
+      <a class="menu-item sys-sub" data-page="my-system" data-subtab="os">
+        <span class="sub-arrow">└</span> OS Info
+      </a>
+      <a class="menu-item sys-sub" data-page="my-system" data-subtab="services">
+        <span class="sub-arrow">└</span> Running Services
+      </a>
+      <a class="menu-item sys-sub" data-page="my-system" data-subtab="logs">
+        <span class="sub-arrow">└</span> Security Logs
+      </a>
+    </nav>
+
+    <div class="sidebar-bottom">
+      <div class="system-status">
+        <div class="online-dot" id="sysStatusDot"></div>
+        <div>
+          <strong>System Online</strong>
+          <small id="sysStatusText">Scanner ready</small>
+        </div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ═══════════════════════════════ MAIN ═════════════════════════════════ -->
+  <main class="main">
+
+    <!-- TOPBAR -->
+    <header class="topbar">
+      <div>
+        <div class="small-title">NETWORK SECURITY</div>
+        <h1 id="pageTitle">Port Scanner</h1>
+        <p class="subtitle" id="pageSubtitle">BlueStrike — Advanced network scanning & vulnerability analysis</p>
+      </div>
+      <div class="top-actions">
+        <button class="top-button" id="btnRefresh" title="Refresh">⟳</button>
+        <button class="top-button" title="Info" id="btnInfo">♢</button>
+        <div class="profile">PX</div>
+      </div>
+    </header>
+
+    <!-- ─────────────────────────────────────────────────────────────────────
+         PAGE: PORT SCANNER
+    ────────────────────────────────────────────────────────────────────── -->
+    <div id="page-port-scanner" class="page active">
+
+      <!-- SCAN CONFIG -->
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h2>New Scan</h2>
+            <p>Configure Nmap reconnaissance parameters</p>
+          </div>
+          <div id="scanBadge" class="badge-ready"><span></span> READY</div>
+        </div>
+
+        <div class="input-grid">
+          <div class="input-box">
+            <label>TARGET</label>
+            <div class="input-field">
+              <span class="input-icon">⌖</span>
+              <input id="targetInput" type="text" value="192.168.1.1" placeholder="IP / Hostname / CIDR">
+            </div>
+          </div>
+          <div class="input-box">
+            <label>PORT RANGE</label>
+            <div class="input-field">
+              <span class="input-icon">◈</span>
+              <input id="portInput" type="text" value="1-1000" placeholder="1-65535">
+            </div>
+          </div>
+          <div class="input-box">
+            <label>SCAN PROFILE</label>
+            <select id="profileInput">
+              <option value="quick">Quick Scan (-T4 -F)</option>
+              <option value="intense" selected>Intense Scan (-T4 -A)</option>
+              <option value="aggressive">Aggressive (--script vuln)</option>
+              <option value="full">Full Scan (-p-)</option>
+              <option value="stealth">Stealth (-sS -T2)</option>
+              <option value="version">Version Detection (-sV)</option>
+              <option value="os_detect">OS Detection (-O)</option>
+            </select>
+          </div>
+          <div class="input-box">
+            <label>TIMING</label>
+            <select id="timingInput">
+              <option>T2 - Polite</option>
+              <option selected>T3 - Normal</option>
+              <option>T4 - Aggressive</option>
+              <option>T5 - Insane</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- ADVANCED OPTIONS -->
+        <div class="advanced-options">
+          <div class="advanced-title">ADVANCED SCAN OPTIONS</div>
+
+          <div class="option-section">
+            <h3>Scan Technique</h3>
+            <div class="technique-grid">
+              <label class="technique active">
+                <input type="radio" name="scanTechnique" value="syn" checked>
+                <span class="radio"></span>
+                <div><strong>TCP SYN</strong><small>-sS</small></div>
+              </label>
+              <label class="technique">
+                <input type="radio" name="scanTechnique" value="connect">
+                <span class="radio"></span>
+                <div><strong>TCP Connect</strong><small>-sT</small></div>
+              </label>
+              <label class="technique">
+                <input type="radio" name="scanTechnique" value="udp">
+                <span class="radio"></span>
+                <div><strong>UDP Scan</strong><small>-sU</small></div>
+              </label>
+              <label class="technique">
+                <input type="radio" name="scanTechnique" value="ack">
+                <span class="radio"></span>
+                <div><strong>TCP ACK</strong><small>-sA</small></div>
+              </label>
+              <label class="technique">
+                <input type="radio" name="scanTechnique" value="fin">
+                <span class="radio"></span>
+                <div><strong>FIN Scan</strong><small>-sF</small></div>
+              </label>
+              <label class="technique">
+                <input type="radio" name="scanTechnique" value="null">
+                <span class="radio"></span>
+                <div><strong>NULL Scan</strong><small>-sN</small></div>
+              </label>
+              <label class="technique">
+                <input type="radio" name="scanTechnique" value="xmas">
+                <span class="radio"></span>
+                <div><strong>XMAS Scan</strong><small>-sX</small></div>
+              </label>
+            </div>
+          </div>
+
+          <div class="option-section">
+            <h3>Detection Options</h3>
+            <div class="toggle-grid">
+              <label class="toggle-option">
+                <input type="checkbox" id="optSV" checked>
+                <span class="toggle"></span><span>Version Detection (-sV)</span>
+              </label>
+              <label class="toggle-option">
+                <input type="checkbox" id="optOS" checked>
+                <span class="toggle"></span><span>OS Detection (-O)</span>
+              </label>
+              <label class="toggle-option">
+                <input type="checkbox" id="optVuln" checked>
+                <span class="toggle"></span><span>Vuln Scripts (--script vuln)</span>
+              </label>
+              <label class="toggle-option">
+                <input type="checkbox" id="optPn">
+                <span class="toggle"></span><span>Skip Ping (-Pn)</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- NSE SCRIPTS -->
+          <div class="option-section">
+            <div class="nse-header-row">
+              <h3>NSE Script Engine</h3>
+              <div class="nse-count-badge"><span id="nseCount">0</span> SELECTED</div>
+            </div>
+            <div class="nse-toolbar">
+              <div class="nse-search-box">
+                <span>⌕</span>
+                <input id="nseSearch" type="text" placeholder="Search NSE scripts...">
+              </div>
+              <select id="nseCategory">
+                <option value="all">All Categories</option>
+                <option value="discovery">Discovery</option>
+                <option value="safe">Safe</option>
+                <option value="auth">Authentication</option>
+                <option value="version">Version</option>
+                <option value="vuln">Vulnerability</option>
+              </select>
+              <button class="nse-action-btn" id="selectAllNse">Select All</button>
+              <button class="nse-action-btn" id="clearNse">Clear</button>
+            </div>
+            <div id="nseList" class="nse-list"></div>
+          </div>
+        </div>
+
+        <!-- ACTIONS -->
+        <div class="scan-actions">
+          <button class="btn-secondary" id="resetBtn">Reset</button>
+          <button class="btn-start" id="startBtn">▶ Start Scan</button>
+          <button class="btn-secondary" id="stopBtn" disabled>■ Stop</button>
+          <button class="btn-exploit" id="exploitAllBtn" disabled>⚡ Auto-Exploit All</button>
+        </div>
+
+        <!-- PROGRESS -->
+        <div class="progress-wrap" id="progressWrap" style="display:none">
+          <div class="progress-info">
+            <span id="progressStatus">Initializing...</span>
+            <span id="progressPct">0%</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;" id="progressCmd"></div>
+        </div>
+      </section>
+
+      <!-- STATS -->
+      <div class="stats-row">
+        <div class="stat-box">
+          <div class="stat-label">HOSTS UP</div>
+          <div class="stat-value cyan" id="statHosts">0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">OPEN PORTS</div>
+          <div class="stat-value green" id="statOpen">0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">VULNERABILITIES</div>
+          <div class="stat-value red" id="statVulns">0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">DURATION</div>
+          <div class="stat-value" id="statDuration">--</div>
+        </div>
+      </div>
+
+      <!-- TERMINAL -->
+      <div class="terminal-card">
+        <div class="terminal-header">
+          <div class="term-dots">
+            <span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span>
+          </div>
+          <span class="term-title">nmap output console</span>
+          <span class="term-cmd" id="termCmd">nmap --interactive</span>
+        </div>
+        <div class="terminal-body" id="terminal">
+          <div><span class="c-green">$</span> nmap --interactive</div>
+          <div class="c-gray">BlueStrike Backend connected — waiting for scan command.</div>
+        </div>
+      </div>
+
+      <!-- PORT RESULTS -->
+      <div class="table-card">
+        <div class="table-header">
+          <h3>Port Scan Results</h3>
+          <div class="search-row">
+            <div class="search-box">
+              <span>⌕</span>
+              <input type="text" id="portSearch" placeholder="Filter ports...">
+            </div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>PORT</th><th>STATE</th><th>SERVICE</th>
+                <th>VERSION / INFO</th><th>CVE</th><th>SEVERITY</th><th>ACTION</th>
+              </tr>
+            </thead>
+            <tbody id="portResults">
+              <tr><td colspan="7" class="tbl-empty">Run a scan to see results</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- VULNERABILITIES -->
+      <div class="table-card" id="vulnSection" style="display:none">
+        <div class="table-header">
+          <h3>🔴 Detected Vulnerabilities</h3>
+          <span class="vuln-count-label" id="vulnCountLabel">0 found</span>
+        </div>
+        <div class="vuln-list" id="vulnList"></div>
+      </div>
+
+    </div><!-- /page-port-scanner -->
+
+
+    <!-- ─────────────────────────────────────────────────────────────────────
+         PAGE: HOST DISCOVERY
+    ────────────────────────────────────────────────────────────────────── -->
+    <div id="page-host-discovery" class="page">
+
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h2>Host Discovery</h2>
+            <p>NetDiscover ARP-based scanning — MAC address &amp; vendor identification</p>
+          </div>
+          <div id="discoverBadge" class="badge-ready"><span></span> READY</div>
+        </div>
+
+        <div class="input-grid">
+          <div class="input-box">
+            <label>IP RANGE (CIDR)</label>
+            <div class="input-field">
+              <span class="input-icon">⌖</span>
+              <input id="ndRange" type="text" value="192.168.1.0/24" placeholder="192.168.x.0/24">
+            </div>
+          </div>
+          <div class="input-box">
+            <label>INTERFACE</label>
+            <select id="ndInterface">
+              <option>eth0</option><option>wlan0</option>
+              <option>en0</option><option>en1</option>
+              <option>Ethernet</option><option>Wi-Fi</option>
+            </select>
+          </div>
+          <div class="input-box">
+            <label>SCAN MODE</label>
+            <select id="ndMode">
+              <option value="active">Active (ARP Broadcast)</option>
+              <option value="passive">Passive (Listen Only)</option>
+            </select>
+          </div>
+          <div class="input-box">
+            <label>TIMEOUT (s)</label>
+            <div class="input-field">
+              <span class="input-icon">◷</span>
+              <input id="ndTimeout" type="text" value="15" placeholder="15">
+            </div>
+          </div>
+        </div>
+
+        <div class="scan-actions">
+          <button class="btn-discover" id="discoverBtn">◉ Start Discovery</button>
+          <button class="btn-secondary" id="stopDiscoverBtn" disabled>■ Stop</button>
+          <button class="btn-secondary" id="clearDiscoverBtn">Clear</button>
+          <button class="btn-secondary" id="viewMapBtn" disabled>⌗ View Network Map</button>
+        </div>
+
+        <!-- HOST FILTER ROW -->
+        <div class="host-filter-row">
+          <div class="search-box">
+            <span>⌕</span>
+            <input type="text" id="hostSearch" placeholder="Search hosts...">
+          </div>
+          <select id="hostFilter">
+            <option value="all">All Hosts</option>
+            <option value="up">Online</option>
+            <option value="down">Offline</option>
+          </select>
+        </div>
+
+        <!-- ND LOG -->
+        <div class="nd-log" id="ndLog">
+          <span class="c-cyan">$ netdiscover — waiting for start command...</span>
+        </div>
+      </section>
+
+      <!-- HOST SUMMARY -->
+      <div class="stats-row">
+        <div class="stat-box">
+          <div class="stat-label">DISCOVERED</div>
+          <div class="stat-value cyan" id="hdDiscovered">0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">ONLINE</div>
+          <div class="stat-value green" id="hdOnline">0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">OFFLINE</div>
+          <div class="stat-value orange" id="hdOffline">0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">AVG LATENCY</div>
+          <div class="stat-value" id="hdLatency">-- ms</div>
+        </div>
+      </div>
+
+      <!-- HOST GRID -->
+      <div id="hostGrid">
+        <div class="host-empty">
+          <div class="host-empty-icon">◎</div>
+          <strong>No hosts discovered yet</strong>
+          <small>Start host discovery to scan the local network using netdiscover</small>
+        </div>
+      </div>
+
+    </div><!-- /page-host-discovery -->
+
+
+    <!-- ─────────────────────────────────────────────────────────────────────
+         PAGE: NETWORK MAP
+    ────────────────────────────────────────────────────────────────────── -->
+    <div id="page-network-map" class="page page-map">
+
+      <div class="map-toolbar">
+        <div>
+          <div class="map-toolbar-title">Network Topology</div>
+          <div class="map-toolbar-sub">Visual representation of discovered network hosts</div>
+        </div>
+        <div class="map-toolbar-controls">
+          <button class="zoom-btn" id="zoomOut">−</button>
+          <span class="zoom-label" id="zoomLabel">100%</span>
+          <button class="zoom-btn" id="zoomIn">+</button>
+          <button class="zoom-btn" id="zoomReset" title="Reset">⟳</button>
+        </div>
+        <div class="map-legend">
+          <div class="legend-item"><span class="legend-dot online"></span> Online</div>
+          <div class="legend-item"><span class="legend-dot offline"></span> Offline</div>
+          <div class="legend-item"><span class="legend-line"></span> Link</div>
+        </div>
+      </div>
+
+      <div class="map-canvas-wrap" id="mapWrap">
+        <canvas id="topoCanvas"></canvas>
+        <div class="map-empty-state" id="mapEmpty">
+          <div class="map-empty-icon">⌗</div>
+          <strong>No network data</strong>
+          <small>Run Host Discovery first, then click "View Network Map"</small>
+          <button class="btn-go-discover" id="goDiscoverBtn">Go to Host Discovery</button>
+        </div>
+        <div class="node-tooltip" id="nodeTooltip">
+          <div class="tt-ip" id="ttIp"></div>
+          <div class="tt-info" id="ttInfo"></div>
+        </div>
+      </div>
+
+    </div><!-- /page-network-map -->
+
+
+    <!-- ─────────────────────────────────────────────────────────────────────
+         PAGE: MY SYSTEM
+    ────────────────────────────────────────────────────────────────────── -->
+    <div id="page-my-system" class="page">
+
+      <!-- Sub-tab bar -->
+      <div class="sys-tabbar">
+        <button class="sys-tab active" data-subtab="os">◈ OS &amp; Hardware</button>
+        <button class="sys-tab" data-subtab="services">⚙ Running Services</button>
+        <button class="sys-tab" data-subtab="logs">⚠ Security Logs</button>
+        <div style="flex:1"></div>
+        <button class="btn-secondary sys-refresh-btn" id="sysRefreshBtn">⟳ Refresh</button>
+        <span class="sys-last-update" id="sysLastUpdate"></span>
+      </div>
+
+      <!-- ── SUB-TAB: OS & Hardware ── -->
+      <div id="systab-os" class="systab active">
+
+        <!-- OS Info Banner -->
+        <div class="sys-os-banner">
+          <div class="sys-os-icon">🐧</div>
+          <div class="sys-os-details">
+            <div class="sys-os-name" id="sysOsName">Loading…</div>
+            <div class="sys-os-meta" id="sysOsMeta"></div>
+          </div>
+          <div class="sys-uptime-box">
+            <div class="sys-uptime-label">UPTIME</div>
+            <div class="sys-uptime-val" id="sysUptime">--</div>
+          </div>
+        </div>
+
+        <!-- Metric Grid (matches screenshot style) -->
+        <div class="sys-metric-grid">
+
+          <!-- CPU -->
+          <div class="sys-metric-card">
+            <div class="sys-metric-header">
+              <div class="sys-metric-title">CPU</div>
+              <div class="sys-metric-icon">▤</div>
+            </div>
+            <div class="sys-metric-row">
+              <span class="sys-metric-label">Frequency</span>
+              <span class="sys-metric-val" id="cpuFreq">-- MHz</span>
+            </div>
+            <div class="sys-bar-wrap"><div class="sys-bar" id="cpuFreqBar"></div></div>
+            <div class="sys-metric-row">
+              <span class="sys-metric-label">Usage</span>
+              <span class="sys-metric-val" id="cpuUsage">-- %</span>
+            </div>
+            <div class="sys-bar-wrap"><div class="sys-bar sys-bar-green" id="cpuUsageBar"></div></div>
+            <div class="sys-metric-row"><span class="sys-metric-label">Cores</span><span class="sys-metric-val" id="cpuCores">--</span></div>
+            <div class="sys-metric-row"><span class="sys-metric-label">Temperature</span><span class="sys-metric-val" id="cpuTemp">-- °C</span></div>
+            <div class="sys-metric-row" style="align-items:flex-start"><span class="sys-metric-label">Model</span><span class="sys-metric-val sys-metric-small" id="cpuModel">--</span></div>
+          </div>
+
+          <!-- GPU -->
+          <div class="sys-metric-card">
+            <div class="sys-metric-header">
+              <div class="sys-metric-title">GPU</div>
+              <div class="sys-metric-icon">▣</div>
+            </div>
+            <div class="sys-metric-row"><span class="sys-metric-label">Name</span><span class="sys-metric-val sys-metric-small" id="gpuName">--</span></div>
+            <div class="sys-metric-row">
+              <span class="sys-metric-label">Usage</span>
+              <span class="sys-metric-val" id="gpuUsage">-- %</span>
+            </div>
+            <div class="sys-bar-wrap"><div class="sys-bar" id="gpuUsageBar"></div></div>
+            <div class="sys-metric-row"><span class="sys-metric-label">Temperature</span><span class="sys-metric-val" id="gpuTemp">-- °C</span></div>
+            <div class="sys-metric-row"><span class="sys-metric-label">VRAM Used</span><span class="sys-metric-val" id="gpuMem">-- MB</span></div>
+            <div class="sys-metric-row"><span class="sys-metric-label">Power</span><span class="sys-metric-val" id="gpuPower">-- W</span></div>
+          </div>
+
+          <!-- Fan / Network -->
+          <div class="sys-metric-card">
+            <div class="sys-metric-header">
+              <div class="sys-metric-title">Network</div>
+              <div class="sys-metric-icon">⌗</div>
+            </div>
+            <div class="sys-metric-row"><span class="sys-metric-label">Hostname</span><span class="sys-metric-val" id="netHostname">--</span></div>
+            <div class="sys-metric-row"><span class="sys-metric-label">Local IP</span><span class="sys-metric-val" id="netIp">--</span></div>
+            <div id="netIfaceList" style="margin-top:10px"></div>
+          </div>
+
+          <!-- Memory -->
+          <div class="sys-metric-card">
+            <div class="sys-metric-header">
+              <div class="sys-metric-title">Memory</div>
+              <div class="sys-metric-icon">▦</div>
+            </div>
+            <div class="sys-metric-row">
+              <span class="sys-metric-label">RAM Used</span>
+              <span class="sys-metric-val" id="ramUsed">-- / -- GB</span>
+            </div>
+            <div class="sys-bar-wrap"><div class="sys-bar sys-bar-orange" id="ramBar"></div></div>
+            <div class="sys-metric-row"><span class="sys-metric-label">Usage</span><span class="sys-metric-val" id="ramPct">-- %</span></div>
+            <div class="sys-metric-row"><span class="sys-metric-label">Free</span><span class="sys-metric-val" id="ramFree">-- GB</span></div>
+            <div class="sys-metric-row" style="margin-top:14px">
+              <span class="sys-metric-label">Disk Used</span>
+              <span class="sys-metric-val" id="diskUsed">-- / -- GB</span>
+            </div>
+            <div class="sys-bar-wrap"><div class="sys-bar sys-bar-red" id="diskBar"></div></div>
+            <div class="sys-metric-row"><span class="sys-metric-label">Disk %</span><span class="sys-metric-val" id="diskPct">-- %</span></div>
+          </div>
+
+        </div>
+      </div><!-- /systab-os -->
+
+      <!-- ── SUB-TAB: Running Services ── -->
+      <div id="systab-services" class="systab">
+        <div class="table-card">
+          <div class="table-header">
+            <h3>⚙ Running Services</h3>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span class="sys-svc-count" id="svcCount">0 services</span>
+              <div class="search-box" style="width:200px">
+                <span>⌕</span>
+                <input type="text" id="svcSearch" placeholder="Filter services…">
+              </div>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>SERVICE</th><th>STATE</th><th>SUB-STATE</th><th>DESCRIPTION</th></tr></thead>
+              <tbody id="svcTableBody">
+                <tr><td colspan="4" class="tbl-empty">Click Refresh to load services</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div><!-- /systab-services -->
+
+      <!-- ── SUB-TAB: Security Logs ── -->
+      <div id="systab-logs" class="systab">
+        <div class="table-card">
+          <div class="table-header">
+            <h3>⚠ Security Event Log</h3>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <select id="logLevelFilter" class="sys-log-filter">
+                <option value="ALL">All Levels</option>
+                <option value="INFO">INFO</option>
+                <option value="WARNING">WARNING</option>
+                <option value="CRITICAL">CRITICAL</option>
+              </select>
+              <select id="logCatFilter" class="sys-log-filter">
+                <option value="ALL">All Categories</option>
+                <option value="AUTH">AUTH</option>
+                <option value="NETWORK">NETWORK</option>
+                <option value="SYSTEM">SYSTEM</option>
+                <option value="ATTACK">ATTACK</option>
+              </select>
+              <button class="btn-secondary" id="clearLogsBtn" style="padding:4px 10px;font-size:11px">Clear View</button>
+            </div>
+          </div>
+          <div class="sys-log-stream" id="logStream">
+            <div class="sys-log-empty">Security event log will appear here.</div>
+          </div>
+        </div>
+      </div><!-- /systab-logs -->
+
+    </div><!-- /page-my-system -->
+
+
+    <footer>
+      <span>BlueStrike FRONTEND v1.0</span>
+      <span>⚠️ Authorized security testing only • Educational simulation</span>
+    </footer>
+
+  </main>
+
+
+  <!-- ════════════════════ EXPLOIT MODAL ════════════════════ -->
+  <div class="modal-overlay" id="exploitModal">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <div class="modal-suptitle">EXPLOIT ENGINE</div>
+          <h3 id="exploitTitle">Auto-Exploit</h3>
+        </div>
+        <button class="modal-close" id="closeExploit">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="exploit-meta" id="exploitMeta"></div>
+        <div class="exploit-log" id="exploitLog"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="closeExploitBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+
+  <script src="script.js"></script>
+</body>
+</html>
