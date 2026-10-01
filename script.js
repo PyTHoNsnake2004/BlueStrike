@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-   BlueStrike — script.js
+   NMAP-X — script.js
    All frontend logic: navigation, API calls via SSE,
    port scanner, host discovery, network map, exploit modal.
    Backend: Flask app.py on http://localhost:5000
@@ -344,7 +344,7 @@ function resetScan() {
   scanResults = []; allVulns = [];
   termClear();
   termLog('$ nmap --interactive', 'c-green');
-  termLog('BlueStrike ready.', 'c-gray');
+  termLog('NMAP-X ready.', 'c-gray');
   $('portResults').innerHTML = '<tr><td colspan="7" class="tbl-empty">Run a scan to see results</td></tr>';
   $('vulnSection').style.display = 'none';
   $('statHosts').textContent = $('statOpen').textContent = $('statVulns').textContent = '0';
@@ -948,7 +948,7 @@ async function streamPost(url, payload, onEvent, onDone) {
 ───────────────────────────────────────────────────────────── */
 renderNseScripts();
 loadBackendInfo();
-console.log('BlueStrike frontend initialized.');
+console.log('NMAP-X frontend initialized.');
 /* ═════════════════════════════════════════════════════════════
    MY SYSTEM — Frontend Logic
 ═════════════════════════════════════════════════════════════ */
@@ -1214,3 +1214,438 @@ document.addEventListener('click', e => {
 }, { capture: true });
 
 console.log('MY SYSTEM module loaded.');
+
+/* ═════════════════════════════════════════════════════════════
+   BACKUP FILE — Frontend Logic (v2 — real file upload)
+═════════════════════════════════════════════════════════════ */
+
+if (typeof PAGE_META !== 'undefined') {
+  PAGE_META['backup'] = ['Backup File', 'AES-256-GCM file encryption & secure key store'];
+}
+
+// ── State ─────────────────────────────────────────────────────
+let _bkFiles    = [];   // FileList for encrypt
+let _bkDecFile  = null; // Single File for decrypt
+
+// ── Helpers ───────────────────────────────────────────────────
+function bkLog(logId, msg, cls = 'bk-log-info') {
+  const el = document.getElementById(logId);
+  if (!el) return;
+  const ts = new Date().toLocaleTimeString();
+  el.innerHTML += `<div class="${cls}">[${ts}] ${msg}</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function bkLogClear(logId) {
+  const el = document.getElementById(logId);
+  if (el) el.innerHTML = '';
+}
+function setPill(state, text) {
+  const p = document.getElementById('bkStatusPill');
+  if (!p) return;
+  p.className = 'bk-status-pill ' + state;
+  p.textContent = text;
+}
+function fmtSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/1024/1024).toFixed(2) + ' MB';
+}
+function escH(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Tab switching ─────────────────────────────────────────────
+function switchBkTab(tab) {
+  document.querySelectorAll('.bk-tab').forEach(b =>
+    b.classList.toggle('active', b.dataset.bktab === tab));
+  document.querySelectorAll('.bktab').forEach(d =>
+    d.classList.toggle('active', d.id === `bktab-${tab}`));
+  if (tab === 'keystore') loadKeyStore();
+}
+document.querySelectorAll('.bk-tab').forEach(btn =>
+  btn.addEventListener('click', () => switchBkTab(btn.dataset.bktab)));
+document.querySelectorAll('[data-bktab]').forEach(el =>
+  el.addEventListener('click', () => {
+    if (typeof showPage === 'function') showPage('backup');
+    switchBkTab(el.dataset.bktab);
+  }));
+
+// ── Password eye toggles ──────────────────────────────────────
+function togglePass(inputId) {
+  const el = document.getElementById(inputId);
+  if (el) el.type = el.type === 'password' ? 'text' : 'password';
+}
+document.getElementById('bkPassEye').addEventListener('click',    () => togglePass('bkPassword'));
+document.getElementById('bkDecPassEye').addEventListener('click', () => togglePass('bkDecPassword'));
+
+// ── Password strength ─────────────────────────────────────────
+document.getElementById('bkPassword').addEventListener('input', function () {
+  const pw  = this.value;
+  const bar = document.getElementById('bkStrengthBar');
+  const lbl = document.getElementById('bkStrengthLabel');
+  let score = 0;
+  if (pw.length >= 8)           score++;
+  if (pw.length >= 12)          score++;
+  if (/[A-Z]/.test(pw))         score++;
+  if (/[0-9]/.test(pw))         score++;
+  if (/[^A-Za-z0-9]/.test(pw))  score++;
+  const lvls = [
+    {w:'0%',   bg:'transparent',   t:''},
+    {w:'25%',  bg:'var(--red)',     t:'⚠ Weak'},
+    {w:'50%',  bg:'var(--orange)',  t:'◑ Fair'},
+    {w:'75%',  bg:'#f0c040',        t:'◕ Good'},
+    {w:'90%',  bg:'var(--green)',   t:'✓ Strong'},
+    {w:'100%', bg:'var(--cyan)',    t:'★ Very Strong'},
+  ];
+  const lv = lvls[Math.min(score, 5)];
+  bar.style.width      = lv.w;
+  bar.style.background = lv.bg;
+  lbl.textContent      = lv.t;
+});
+
+// ══════════════════════════════════════════════════════════════
+//  ENCRYPT — File selection (picker + drag & drop)
+// ══════════════════════════════════════════════════════════════
+
+function renderEncryptFileList(files) {
+  _bkFiles = files;
+  const listEl  = document.getElementById('bkFileList');
+  const itemsEl = document.getElementById('bkFileItems');
+  const countEl = document.getElementById('bkFileCount');
+
+  if (!files || files.length === 0) {
+    listEl.style.display = 'none';
+    _bkFiles = [];
+    return;
+  }
+
+  listEl.style.display = 'block';
+  countEl.textContent  = `${files.length} file${files.length > 1 ? 's' : ''} selected`;
+
+  itemsEl.innerHTML = Array.from(files).map(f =>
+    `<div class="bk-file-item">
+       <span>📄 ${escH(f.name)}</span>
+       <span class="bk-file-size">${fmtSize(f.size)}</span>
+     </div>`
+  ).join('');
+
+  // Auto-fill key name from first file if empty
+  const keyInput = document.getElementById('bkKeyName');
+  if (!keyInput.value) {
+    keyInput.value = files[0].name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '-')
+      + '-' + new Date().toISOString().slice(0, 10);
+  }
+}
+
+// Choose file(s) button
+document.getElementById('bkPickFileBtn').addEventListener('click', () => {
+  document.getElementById('bkFilePicker').click();
+});
+document.getElementById('bkFilePicker').addEventListener('change', function () {
+  if (this.files.length) renderEncryptFileList(this.files);
+});
+
+// Choose folder button
+document.getElementById('bkPickFolderBtn').addEventListener('click', () => {
+  document.getElementById('bkFolderPicker').click();
+});
+document.getElementById('bkFolderPicker').addEventListener('change', function () {
+  if (this.files.length) renderEncryptFileList(this.files);
+});
+
+// Clear selection
+document.getElementById('bkClearFiles').addEventListener('click', () => {
+  _bkFiles = [];
+  document.getElementById('bkFilePicker').value   = '';
+  document.getElementById('bkFolderPicker').value = '';
+  document.getElementById('bkFileList').style.display = 'none';
+  document.getElementById('bkKeyName').value = '';
+});
+
+// Drag & drop on encrypt dropzone
+const encDropzone = document.getElementById('bkDropzone');
+encDropzone.addEventListener('dragover',  e => { e.preventDefault(); encDropzone.classList.add('dragover'); });
+encDropzone.addEventListener('dragleave', () => encDropzone.classList.remove('dragover'));
+encDropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  encDropzone.classList.remove('dragover');
+  const files = e.dataTransfer.files;
+  if (files.length) renderEncryptFileList(files);
+});
+
+// ══════════════════════════════════════════════════════════════
+//  ENCRYPT — Submit via FormData
+// ══════════════════════════════════════════════════════════════
+
+document.getElementById('bkEncryptBtn').addEventListener('click', async () => {
+  const keyName = document.getElementById('bkKeyName').value.trim();
+  const pw      = document.getElementById('bkPassword').value;
+  const pw2     = document.getElementById('bkPasswordConfirm').value;
+
+  if (!_bkFiles || _bkFiles.length === 0) return alert('Please select at least one file.');
+  if (!keyName)      return alert('Please enter a Key Name.');
+  if (pw.length < 8) return alert('Password must be at least 8 characters.');
+  if (pw !== pw2)    return alert('Passwords do not match.');
+
+  bkLogClear('bkEncLog');
+  bkLog('bkEncLog', `Starting AES-256-GCM encryption...`, 'bk-log-info');
+  bkLog('bkEncLog', `Files  : ${_bkFiles.length} selected`, 'bk-log-info');
+  bkLog('bkEncLog', `Key    : ${keyName}`, 'bk-log-info');
+  setPill('running', '⟳ Encrypting...');
+  document.getElementById('bkEncryptBtn').disabled = true;
+
+  try {
+    const form = new FormData();
+    form.append('key_name', keyName);
+    form.append('password', pw);
+    Array.from(_bkFiles).forEach(f => form.append('file', f));
+
+    const res  = await fetch(`${API}/backup/encrypt`, { method: 'POST', body: form });
+    const data = await res.json();
+
+    if (data.ok) {
+      bkLog('bkEncLog', `✓ Uploaded ${_bkFiles.length} file(s) to server`, 'bk-log-ok');
+      bkLog('bkEncLog', `✓ Random AES-256 key generated`, 'bk-log-ok');
+      bkLog('bkEncLog', `✓ Encrypted with AES-256-GCM (${data.crypto_lib})`, 'bk-log-ok');
+      bkLog('bkEncLog', `✓ Key wrapped with PBKDF2-SHA256 (100k rounds)`, 'bk-log-ok');
+      bkLog('bkEncLog', `✓ Key saved → keystore/${keyName}.bkkey  [ONE-TIME USE]`, 'bk-log-ok');
+      bkLog('bkEncLog', `✓ Output  → ${data.out_file}`, 'bk-log-ok');
+      bkLog('bkEncLog', `✓ Folder  → ${data.enc_dir}`, 'bk-log-ok');
+      bkLog('bkEncLog', `✓ Size    → ${fmtSize(data.size_bytes)}`, 'bk-log-ok');
+      bkLog('bkEncLog', `⚠ Key is ONE-TIME — auto-deletes after restore`, 'bk-log-warn');
+      bkLog('bkEncLog', `━━━ DONE — file is secure 🔐 ━━━`, 'bk-log-ok');
+      setPill('done', '✓ Encrypted');
+
+      // Reset form
+      _bkFiles = [];
+      document.getElementById('bkFilePicker').value   = '';
+      document.getElementById('bkFolderPicker').value = '';
+      document.getElementById('bkFileList').style.display = 'none';
+      document.getElementById('bkKeyName').value         = '';
+      document.getElementById('bkPassword').value        = '';
+      document.getElementById('bkPasswordConfirm').value = '';
+      document.getElementById('bkStrengthBar').style.width = '0%';
+      document.getElementById('bkStrengthLabel').textContent = '';
+
+      if (document.getElementById('bktab-keystore').classList.contains('active')) loadKeyStore();
+    } else {
+      bkLog('bkEncLog', `✗ Error: ${data.error}`, 'bk-log-error');
+      setPill('error', '✗ Failed');
+    }
+  } catch (e) {
+    bkLog('bkEncLog', `✗ Network error: ${e.message}`, 'bk-log-error');
+    setPill('error', '✗ Error');
+  }
+  document.getElementById('bkEncryptBtn').disabled = false;
+});
+
+// ══════════════════════════════════════════════════════════════
+//  DECRYPT — File selection (picker + drag & drop)
+// ══════════════════════════════════════════════════════════════
+
+function renderDecryptFile(file) {
+  _bkDecFile = file;
+  const listEl  = document.getElementById('bkDecFileList');
+  const nameEl  = document.getElementById('bkDecFileName');
+  if (!file) { listEl.style.display = 'none'; return; }
+  listEl.style.display = 'block';
+  nameEl.innerHTML = `<span style="color:var(--cyan)">🔒 ${escH(file.name)}</span>
+                      <span class="bk-file-size">${fmtSize(file.size)}</span>`;
+
+  // Auto-fill key name from filename
+  const keyIn = document.getElementById('bkDecKeyName');
+  if (!keyIn.value) {
+    keyIn.value = file.name.replace('.bkenc', '').replace(/\.[^.]+$/, '');
+  }
+}
+
+document.getElementById('bkDecPickBtn').addEventListener('click', () =>
+  document.getElementById('bkDecFilePicker').click());
+document.getElementById('bkDecFilePicker').addEventListener('change', function () {
+  if (this.files[0]) renderDecryptFile(this.files[0]);
+});
+document.getElementById('bkDecClearFile').addEventListener('click', () => {
+  _bkDecFile = null;
+  document.getElementById('bkDecFilePicker').value = '';
+  document.getElementById('bkDecFileList').style.display = 'none';
+  document.getElementById('bkDecKeyName').value = '';
+});
+
+// Drag & drop on decrypt dropzone
+const decDropzone = document.getElementById('bkDecDropzone');
+decDropzone.addEventListener('dragover',  e => { e.preventDefault(); decDropzone.classList.add('dragover'); });
+decDropzone.addEventListener('dragleave', () => decDropzone.classList.remove('dragover'));
+decDropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  decDropzone.classList.remove('dragover');
+  const f = e.dataTransfer.files[0];
+  if (f) {
+    if (!f.name.endsWith('.bkenc')) {
+      alert('Please drop a .bkenc file.');
+      return;
+    }
+    renderDecryptFile(f);
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  DECRYPT — Submit via FormData
+// ══════════════════════════════════════════════════════════════
+
+document.getElementById('bkDecryptBtn').addEventListener('click', async () => {
+  const keyName = document.getElementById('bkDecKeyName').value.trim();
+  const pw      = document.getElementById('bkDecPassword').value;
+
+  if (!_bkDecFile) return alert('Please select a .bkenc file.');
+  if (!keyName)    return alert('Please enter the Key Name.');
+  if (!pw)         return alert('Please enter your Master Password.');
+
+  bkLogClear('bkDecLog');
+  bkLog('bkDecLog', `Starting decryption...`, 'bk-log-info');
+  bkLog('bkDecLog', `File : ${_bkDecFile.name}`, 'bk-log-info');
+  bkLog('bkDecLog', `Key  : ${keyName}`, 'bk-log-info');
+  setPill('running', '⟳ Decrypting...');
+  document.getElementById('bkDecryptBtn').disabled = true;
+
+  try {
+    const form = new FormData();
+    form.append('key_name', keyName);
+    form.append('password', pw);
+    form.append('file', _bkDecFile);
+
+    const res  = await fetch(`${API}/backup/decrypt`, { method: 'POST', body: form });
+    const data = await res.json();
+
+    if (data.ok) {
+      bkLog('bkDecLog', `✓ File uploaded to server`, 'bk-log-ok');
+      bkLog('bkDecLog', `✓ Key loaded from keystore/${keyName}.bkkey`, 'bk-log-ok');
+      bkLog('bkDecLog', `✓ PBKDF2-SHA256 key derivation...`, 'bk-log-ok');
+      bkLog('bkDecLog', `✓ AES-256-GCM decryption complete`, 'bk-log-ok');
+      bkLog('bkDecLog', `✓ Restored → ${data.out_path}`, 'bk-log-ok');
+      bkLog('bkDecLog', `✓ Size    → ${fmtSize(data.size_bytes)}`, 'bk-log-ok');
+      if (data.key_deleted) {
+        bkLog('bkDecLog', `🗑 Key "${keyName}" auto-deleted (one-time use)`, 'bk-log-warn');
+      }
+      bkLog('bkDecLog', `━━━ DONE — file restored 🔓 ━━━`, 'bk-log-ok');
+      setPill('done', '✓ Restored');
+
+      // Reset form
+      _bkDecFile = null;
+      document.getElementById('bkDecFilePicker').value = '';
+      document.getElementById('bkDecFileList').style.display = 'none';
+      document.getElementById('bkDecKeyName').value    = '';
+      document.getElementById('bkDecPassword').value   = '';
+
+      if (document.getElementById('bktab-keystore').classList.contains('active')) loadKeyStore();
+    } else {
+      bkLog('bkDecLog', `✗ Error: ${data.error}`, 'bk-log-error');
+      setPill('error', '✗ Failed');
+    }
+  } catch (e) {
+    bkLog('bkDecLog', `✗ Network error: ${e.message}`, 'bk-log-error');
+    setPill('error', '✗ Error');
+  }
+  document.getElementById('bkDecryptBtn').disabled = false;
+});
+
+// ══════════════════════════════════════════════════════════════
+//  KEY STORE
+// ══════════════════════════════════════════════════════════════
+
+let _ksDeleteTarget = null;
+
+document.getElementById('bkLoadKeysBtn').addEventListener('click', async () => {
+  try {
+    const res  = await fetch(`${API}/backup/keys`);
+    const data = await res.json();
+    if (!data.keys.length) return alert('No keys found in keystore.');
+    const names = data.keys.map(k => k.key_name).join('\n• ');
+    alert('Available keys:\n• ' + names);
+  } catch (e) { alert('Could not load keys: ' + e.message); }
+});
+
+async function loadKeyStore() {
+  try {
+    const res  = await fetch(`${API}/backup/keys`);
+    const data = await res.json();
+    const ksPath = document.getElementById('ksPathInput');
+    if (ksPath) ksPath.value = data.keystore_dir || 'keystore/';
+    renderKeyTable(data.keys || []);
+  } catch (e) {
+    const tb = document.getElementById('ksTableBody');
+    if (tb) tb.innerHTML = `<tr><td colspan="5" class="tbl-empty" style="color:var(--red)">⚠ Backend offline</td></tr>`;
+  }
+}
+
+function renderKeyTable(keys) {
+  const searchEl = document.getElementById('ksSearch');
+  const query    = searchEl ? searchEl.value.toLowerCase() : '';
+  const filtered = keys.filter(k =>
+    k.key_name.toLowerCase().includes(query) ||
+    (k.source_file || '').toLowerCase().includes(query));
+
+  const tb = document.getElementById('ksTableBody');
+  if (!tb) return;
+  if (!filtered.length) {
+    tb.innerHTML = `<tr><td colspan="5" class="tbl-empty">No keys found</td></tr>`;
+    return;
+  }
+  tb.innerHTML = filtered.map(k => `
+    <tr>
+      <td style="color:var(--cyan);font-weight:700">${escH(k.key_name)}</td>
+      <td style="color:var(--muted);font-size:11px">${escH(k.created)}</td>
+      <td><span style="color:var(--green);font-size:11px">${escH(k.algorithm)}</span></td>
+      <td style="color:var(--muted);font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+        ${escH(k.source_file)}</td>
+      <td>
+        <button class="ks-action-btn" onclick="ksUseKey('${escH(k.key_name)}')">Use</button>
+        <button class="ks-action-btn del" onclick="ksConfirmDelete('${escH(k.key_name)}')">🗑</button>
+      </td>
+    </tr>`).join('');
+}
+
+function ksUseKey(name) {
+  document.getElementById('bkDecKeyName').value = name;
+  switchBkTab('decrypt');
+}
+function ksConfirmDelete(name) {
+  _ksDeleteTarget = name;
+  document.getElementById('ksDeleteKeyName').textContent = name;
+  document.getElementById('ksDeleteModal').style.display = 'flex';
+}
+
+const ksDeleteClose   = document.getElementById('ksDeleteClose');
+const ksDeleteCancel  = document.getElementById('ksDeleteCancel');
+const ksDeleteConfirm = document.getElementById('ksDeleteConfirm');
+const ksRefreshBtn    = document.getElementById('ksRefreshBtn');
+const ksSearchEl      = document.getElementById('ksSearch');
+
+if (ksDeleteClose)   ksDeleteClose.addEventListener('click',  () => document.getElementById('ksDeleteModal').style.display = 'none');
+if (ksDeleteCancel)  ksDeleteCancel.addEventListener('click', () => document.getElementById('ksDeleteModal').style.display = 'none');
+if (ksDeleteConfirm) ksDeleteConfirm.addEventListener('click', async () => {
+  if (!_ksDeleteTarget) return;
+  try {
+    await fetch(`${API}/backup/keys/${encodeURIComponent(_ksDeleteTarget)}`, { method: 'DELETE' });
+    document.getElementById('ksDeleteModal').style.display = 'none';
+    loadKeyStore();
+  } catch (e) { alert('Delete failed: ' + e.message); }
+});
+if (ksRefreshBtn) ksRefreshBtn.addEventListener('click', loadKeyStore);
+if (ksSearchEl)   ksSearchEl.addEventListener('input', loadKeyStore);
+
+// ── Check crypto lib on load ──────────────────────────────────
+async function checkBackupReady() {
+  try {
+    const res  = await fetch(`${API}/backup/status`);
+    const data = await res.json();
+    if (!data.ready) {
+      const logEl = document.getElementById('bkEncLog');
+      if (logEl) logEl.innerHTML = `<div class="bk-log-error">
+⚠ No crypto library found.<br>
+Run: <b>pip install pycryptodome</b> then restart app.py</div>`;
+    }
+  } catch (_) {}
+}
+checkBackupReady();
+
+console.log('Backup File v2 module loaded.');
