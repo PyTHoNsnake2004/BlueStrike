@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-BlueStrike Backend — Flask API
+NMAP-X Backend — Flask API
 Real nmap scanning + netdiscover + vulnerability detection + auto-exploit simulation
 Based on CyberSentinel Security Suite v3.2
 Run: pip install flask flask-cors && python app.py
@@ -223,7 +223,7 @@ def check_vulnerabilities(scan_results: Dict) -> List[Dict]:
 
 
 # ═════════════════════════════════════════════════════════════
-#  BlueStrikeML / TEXT PARSER  (from index.py)
+#  NMAP XML / TEXT PARSER  (from index.py)
 # ═════════════════════════════════════════════════════════════
 
 def parse_nmap_xml(xml_output: str) -> Dict:
@@ -773,6 +773,8 @@ def api_exploit_all():
 
 import shutil
 import socket
+import struct
+import fcntl
 import glob
 
 # ── Security event log (in-memory ring buffer) ────────────────
@@ -795,7 +797,7 @@ def _add_security_event(level: str, category: str, message: str, detail: str = "
             _security_log.pop(0)
 
 # Pre-seed with some realistic startup events
-_add_security_event('INFO',    'SYSTEM',  'BlueStrike service started', f'Platform: {platform.system()}')
+_add_security_event('INFO',    'SYSTEM',  'NMAP-X service started', f'Platform: {platform.system()}')
 _add_security_event('INFO',    'NETWORK', 'Network interfaces initialised', ', '.join(get_network_interfaces()))
 _add_security_event('INFO',    'AUTH',    'Admin session opened', f'Root: {has_privileges()}')
 
@@ -1110,6 +1112,358 @@ _orig_exploit    = api_exploit    if 'api_exploit'    in dir() else None  # noqa
 _orig_discover   = api_discover   if 'api_discover'   in dir() else None  # noqa
 
 
+# ═════════════════════════════════════════════════════════════
+#  BACKUP FILE  —  AES-256-GCM Encrypt / Decrypt + Key Store
+# ═════════════════════════════════════════════════════════════
+
+import base64
+import hashlib
+import hmac
+import zipfile
+import tempfile
+from pathlib import Path
+
+# Try pycryptodome first, then fallback to cryptography
+try:
+    from Crypto.Cipher import AES
+    from Crypto.Random import get_random_bytes
+    from Crypto.Protocol.KDF import PBKDF2
+    from Crypto.Hash import SHA256, HMAC
+    _CRYPTO_LIB = 'pycryptodome'
+except ImportError:
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+        from cryptography.hazmat.primitives import hashes
+        import secrets as _secrets
+        _CRYPTO_LIB = 'cryptography'
+    except ImportError:
+        _CRYPTO_LIB = None
+
+KEYSTORE_DIR = Path('keystore')
+KEYSTORE_DIR.mkdir(exist_ok=True)
+
+PBKDF2_ITERATIONS = 100_000
+AES_KEY_SIZE      = 32   # 256 bits
+GCM_NONCE_SIZE    = 12
+SALT_SIZE         = 32
+
+
+def _generate_key() -> bytes:
+    if _CRYPTO_LIB == 'pycryptodome':
+        return get_random_bytes(AES_KEY_SIZE)
+    elif _CRYPTO_LIB == 'cryptography':
+        return _secrets.token_bytes(AES_KEY_SIZE)
+    else:
+        return os.urandom(AES_KEY_SIZE)
+
+
+def _derive_key_from_password(password: str, salt: bytes) -> bytes:
+    """PBKDF2-SHA256 — 100k iterations, 32-byte output."""
+    if _CRYPTO_LIB == 'pycryptodome':
+        return PBKDF2(password.encode(), salt, dkLen=AES_KEY_SIZE,
+                      count=PBKDF2_ITERATIONS, prf=lambda p, s: HMAC.new(p, s, SHA256).digest())
+    elif _CRYPTO_LIB == 'cryptography':
+        kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=AES_KEY_SIZE,
+                         salt=salt, iterations=PBKDF2_ITERATIONS)
+        return kdf.derive(password.encode())
+    else:
+        # Pure stdlib fallback (slower but works)
+        return hashlib.pbkdf2_hmac('sha256', password.encode(), salt, PBKDF2_ITERATIONS, dklen=AES_KEY_SIZE)
+
+
+def _aes_gcm_encrypt(key: bytes, plaintext: bytes) -> tuple[bytes, bytes]:
+    """Returns (nonce, ciphertext+tag)."""
+    nonce = os.urandom(GCM_NONCE_SIZE)
+    if _CRYPTO_LIB == 'pycryptodome':
+        cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+        ct, tag = cipher.encrypt_and_digest(plaintext)
+        return nonce, ct + tag
+    elif _CRYPTO_LIB == 'cryptography':
+        aesgcm = AESGCM(key)
+        ct = aesgcm.encrypt(nonce, plaintext, None)   # ct includes tag
+        return nonce, ct
+    else:
+        raise RuntimeError("No crypto library installed. Run: pip install pycryptodome")
+
+
+def _aes_gcm_decrypt(key: bytes, nonce: bytes, ciphertext_tag: bytes) -> bytes:
+    if _CRYPTO_LIB == 'pycryptodome':
+        cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+        ct, tag = ciphertext_tag[:-16], ciphertext_tag[-16:]
+        return cipher.decrypt_and_verify(ct, tag)
+    elif _CRYPTO_LIB == 'cryptography':
+        aesgcm = AESGCM(key)
+        return aesgcm.decrypt(nonce, ciphertext_tag, None)
+    else:
+        raise RuntimeError("No crypto library installed. Run: pip install pycryptodome")
+
+
+def _encrypt_key_with_password(aes_key: bytes, password: str) -> dict:
+    """Wrap AES key with password-derived key. Returns JSON-safe dict."""
+    salt         = os.urandom(SALT_SIZE)
+    derived_key  = _derive_key_from_password(password, salt)
+    nonce, wrapped = _aes_gcm_encrypt(derived_key, aes_key)
+    return {
+        'salt':    base64.b64encode(salt).decode(),
+        'nonce':   base64.b64encode(nonce).decode(),
+        'wrapped': base64.b64encode(wrapped).decode(),
+        'iters':   PBKDF2_ITERATIONS,
+    }
+
+
+def _decrypt_key_with_password(key_data: dict, password: str) -> bytes:
+    """Unwrap AES key from password-protected dict."""
+    salt       = base64.b64decode(key_data['salt'])
+    nonce      = base64.b64decode(key_data['nonce'])
+    wrapped    = base64.b64decode(key_data['wrapped'])
+    iters      = key_data.get('iters', PBKDF2_ITERATIONS)
+    derived_key = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, iters, dklen=AES_KEY_SIZE)
+    return _aes_gcm_decrypt(derived_key, nonce, wrapped)
+
+
+def _save_key_record(key_name: str, aes_key: bytes, password: str,
+                     source_file: str, algo: str = 'AES-256-GCM') -> Path:
+    key_entry = {
+        'key_name':    key_name,
+        'created':     datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'algorithm':   algo,
+        'source_file': source_file,
+        'used':        False,
+        'key_data':    _encrypt_key_with_password(aes_key, password),
+    }
+    key_path = KEYSTORE_DIR / f'{key_name}.bkkey'
+    with open(key_path, 'w') as f:
+        json.dump(key_entry, f, indent=2)
+    return key_path
+
+
+def _load_key_record(key_name: str) -> dict:
+    key_path = KEYSTORE_DIR / f'{key_name}.bkkey'
+    if not key_path.exists():
+        raise FileNotFoundError(f"Key '{key_name}' not found in keystore")
+    with open(key_path) as f:
+        return json.load(f)
+
+
+def _pack_folder_to_bytes(folder_path: Path) -> bytes:
+    """Zip a folder in-memory and return the bytes."""
+    buf = tempfile.SpooledTemporaryFile(max_size=100 * 1024 * 1024)
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for fp in folder_path.rglob('*'):
+            if fp.is_file():
+                zf.write(fp, fp.relative_to(folder_path.parent))
+    buf.seek(0)
+    return buf.read()
+
+
+# ── API: Check crypto library ─────────────────────────────────
+@app.route('/api/backup/status', methods=['GET'])
+def api_backup_status():
+    return jsonify({
+        'crypto_lib':  _CRYPTO_LIB or 'none',
+        'ready':       _CRYPTO_LIB is not None,
+        'keystore_dir': str(KEYSTORE_DIR.absolute()),
+        'key_count':   len(list(KEYSTORE_DIR.glob('*.bkkey'))),
+    })
+
+
+# ── API: Encrypt a file or folder ─────────────────────────────
+@app.route('/api/backup/encrypt', methods=['POST'])
+def api_backup_encrypt():
+    # Accepts multipart/form-data: file(s) + key_name + password
+    key_name = request.form.get('key_name', '').strip()
+    password = request.form.get('password', '')
+
+    if not key_name:
+        return jsonify({'ok': False, 'error': 'Key name is required'}), 400
+    if not password or len(password) < 8:
+        return jsonify({'ok': False, 'error': 'Password must be at least 8 characters'}), 400
+    if 'file' not in request.files:
+        return jsonify({'ok': False, 'error': 'No file uploaded'}), 400
+
+    # Keyname must be unique
+    key_file = KEYSTORE_DIR / f'{key_name}.bkkey'
+    if key_file.exists():
+        return jsonify({'ok': False, 'error': f"Key '{key_name}' already exists. Choose a different name."}), 400
+
+    ENCRYPTED_DIR = Path('encrypted_files')
+    ENCRYPTED_DIR.mkdir(exist_ok=True)
+
+    uploaded = request.files.getlist('file')
+
+    try:
+        if len(uploaded) == 1:
+            # Single file
+            f = uploaded[0]
+            plaintext    = f.read()
+            out_filename = f.filename + '.bkenc'
+            src_name     = f.filename
+        else:
+            # Multiple files — zip them together
+            buf = tempfile.SpooledTemporaryFile(max_size=200 * 1024 * 1024)
+            with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for uf in uploaded:
+                    zf.writestr(uf.filename, uf.read())
+            buf.seek(0)
+            plaintext    = buf.read()
+            out_filename = (uploaded[0].filename.rsplit('.', 1)[0] + '_bundle.zip') + '.bkenc'
+            src_name     = f'{len(uploaded)} files'
+
+        # Generate AES-256 key & encrypt
+        aes_key           = _generate_key()
+        nonce, ciphertext = _aes_gcm_encrypt(aes_key, plaintext)
+
+        # Build output: magic(8) + nonce(12) + ciphertext+tag
+        MAGIC        = b'BKSTRIKE'
+        output_bytes = MAGIC + nonce + ciphertext
+
+        out_path = ENCRYPTED_DIR / out_filename
+        with open(out_path, 'wb') as fout:
+            fout.write(output_bytes)
+
+        # Save key to keystore (one-time use)
+        key_path = _save_key_record(key_name, aes_key, password, src_name)
+        _add_security_event('WARNING', 'SYSTEM',
+                            f'File encrypted → {src_name}',
+                            f'Key: {key_name} | Dest: {out_path}')
+
+        return jsonify({
+            'ok':         True,
+            'out_file':   out_filename,
+            'out_path':   str(out_path.absolute()),
+            'key_file':   str(key_path.absolute()),
+            'size_bytes': len(output_bytes),
+            'key_name':   key_name,
+            'algo':       'AES-256-GCM',
+            'crypto_lib': _CRYPTO_LIB,
+            'enc_dir':    str(ENCRYPTED_DIR.absolute()),
+        })
+
+    except Exception as e:
+        _add_security_event('CRITICAL', 'SYSTEM', f'Encrypt failed: {src_name}', str(e))
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# ── API: Decrypt a .bkenc file (upload via browser) ──────────
+@app.route('/api/backup/decrypt', methods=['POST'])
+def api_backup_decrypt():
+    # Accepts multipart/form-data: file (.bkenc) + key_name + password
+    key_name = request.form.get('key_name', '').strip()
+    password = request.form.get('password', '')
+
+    if not key_name or not password:
+        return jsonify({'ok': False, 'error': 'key_name and password are required'}), 400
+    if 'file' not in request.files:
+        return jsonify({'ok': False, 'error': 'No encrypted file uploaded'}), 400
+
+    enc_file_obj = request.files['file']
+    raw          = enc_file_obj.read()
+    orig_name    = enc_file_obj.filename
+
+    MAGIC = b'BKSTRIKE'
+    if not raw.startswith(MAGIC):
+        return jsonify({'ok': False, 'error': 'Invalid BlueStrike encrypted file (.bkenc required)'}), 400
+
+    try:
+        # Load key and decrypt AES key
+        record  = _load_key_record(key_name)
+        aes_key = _decrypt_key_with_password(record['key_data'], password)
+
+        raw        = raw[len(MAGIC):]
+        nonce      = raw[:GCM_NONCE_SIZE]
+        ciphertext = raw[GCM_NONCE_SIZE:]
+        plaintext  = _aes_gcm_decrypt(aes_key, nonce, ciphertext)
+
+        # Save to restored/ folder
+        RESTORED_DIR = Path('restored')
+        RESTORED_DIR.mkdir(exist_ok=True)
+
+        # Strip .bkenc extension to get original filename
+        out_name = orig_name
+        for ext in ('.bkenc', '.zip.bkenc'):
+            if out_name.endswith(ext):
+                out_name = out_name[:-len(ext)]
+                break
+
+        # Multi-file bundle — extract zip
+        is_zip_bundle = orig_name.endswith('.zip.bkenc') or out_name.endswith('.zip')
+        if is_zip_bundle:
+            bundle_dir = RESTORED_DIR / out_name.replace('.zip', '_restored')
+            bundle_dir.mkdir(exist_ok=True)
+            with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp:
+                tmp.write(plaintext)
+                tmp_path = tmp.name
+            with zipfile.ZipFile(tmp_path, 'r') as zf:
+                zf.extractall(bundle_dir)
+            os.unlink(tmp_path)
+            out_path = str(bundle_dir.absolute())
+        else:
+            out_file = RESTORED_DIR / out_name
+            with open(out_file, 'wb') as f:
+                f.write(plaintext)
+            out_path = str(out_file.absolute())
+
+        # ONE-TIME KEY: auto-delete after successful decryption
+        key_file_path = KEYSTORE_DIR / f'{key_name}.bkkey'
+        deleted_key   = False
+        if key_file_path.exists():
+            key_file_path.unlink()
+            deleted_key = True
+
+        _add_security_event('INFO', 'SYSTEM',
+                            f'File decrypted → {orig_name}',
+                            f'Key: {key_name} | Dest: {out_path} | Key deleted: {deleted_key}')
+
+        return jsonify({
+            'ok':          True,
+            'out_path':    out_path,
+            'out_name':    out_name,
+            'key_name':    key_name,
+            'size_bytes':  len(plaintext),
+            'key_deleted': deleted_key,
+        })
+
+    except ValueError:
+        return jsonify({'ok': False, 'error': 'Wrong password or corrupted file'}), 400
+    except FileNotFoundError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 404
+    except Exception as e:
+        _add_security_event('CRITICAL', 'SYSTEM', f'Decrypt failed: {orig_name}', str(e))
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# ── API: List all keys in keystore ───────────────────────────
+@app.route('/api/backup/keys', methods=['GET'])
+def api_backup_keys():
+    keys = []
+    for kf in sorted(KEYSTORE_DIR.glob('*.bkkey'), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            with open(kf) as f:
+                rec = json.load(f)
+            keys.append({
+                'key_name':    rec.get('key_name', kf.stem),
+                'created':     rec.get('created', ''),
+                'algorithm':   rec.get('algorithm', 'AES-256-GCM'),
+                'source_file': rec.get('source_file', ''),
+                'file':        str(kf),
+            })
+        except Exception:
+            pass
+    return jsonify({'keys': keys, 'keystore_dir': str(KEYSTORE_DIR.absolute())})
+
+
+# ── API: Delete a key ─────────────────────────────────────────
+@app.route('/api/backup/keys/<key_name>', methods=['DELETE'])
+def api_backup_delete_key(key_name: str):
+    key_file = KEYSTORE_DIR / f'{key_name}.bkkey'
+    if not key_file.exists():
+        return jsonify({'ok': False, 'error': 'Key not found'}), 404
+    key_file.unlink()
+    _add_security_event('WARNING', 'SYSTEM', f'Key deleted: {key_name}', 'Manual deletion from Key Store')
+    return jsonify({'ok': True})
+
+
 # ── STATIC FILES ──────────────────────────────────────────────
 @app.route('/')
 def index():
@@ -1123,7 +1477,7 @@ def static_files(filename):
 # ─────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     print("╔══════════════════════════════════════════╗")
-    print("║   BlueStrike Backend  —  Flask API Server    ║")
+    print("║   NMAP-X Backend  —  Flask API Server    ║")
     print("║   http://127.0.0.1:5000                  ║")
     print("╚══════════════════════════════════════════╝")
     print(f"  Platform  : {platform.system()}")
