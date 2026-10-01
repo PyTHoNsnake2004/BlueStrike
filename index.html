@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BlueStrike | Network Scanner</title>
+  <title>NMAP-X | Network Scanner</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -13,7 +13,7 @@
 
     <div class="logo">
       <div class="logo-mark">◉</div>
-      <div class="logo-text">Blue<span>Strike</span></div>
+      <div class="logo-text">NMAP<span>-X</span></div>
     </div>
 
     <div class="menu-title">SCANNER</div>
@@ -49,6 +49,22 @@
       </a>
     </nav>
 
+    <div class="menu-title second-title">SECURITY</div>
+    <nav>
+      <a class="menu-item" data-page="backup">
+        <span>🔒</span> Backup File
+      </a>
+      <a class="menu-item sys-sub" data-page="backup" data-bktab="encrypt">
+        <span class="sub-arrow">└</span> Encrypt &amp; Backup
+      </a>
+      <a class="menu-item sys-sub" data-page="backup" data-bktab="decrypt">
+        <span class="sub-arrow">└</span> Decrypt &amp; Restore
+      </a>
+      <a class="menu-item sys-sub" data-page="backup" data-bktab="keystore">
+        <span class="sub-arrow">└</span> Key Store
+      </a>
+    </nav>
+
     <div class="sidebar-bottom">
       <div class="system-status">
         <div class="online-dot" id="sysStatusDot"></div>
@@ -69,7 +85,7 @@
       <div>
         <div class="small-title">NETWORK SECURITY</div>
         <h1 id="pageTitle">Port Scanner</h1>
-        <p class="subtitle" id="pageSubtitle">BlueStrike — Advanced network scanning & vulnerability analysis</p>
+        <p class="subtitle" id="pageSubtitle">Nmap-based vulnerability scanning with auto-exploitation</p>
       </div>
       <div class="top-actions">
         <button class="top-button" id="btnRefresh" title="Refresh">⟳</button>
@@ -274,7 +290,7 @@
         </div>
         <div class="terminal-body" id="terminal">
           <div><span class="c-green">$</span> nmap --interactive</div>
-          <div class="c-gray">BlueStrike Backend connected — waiting for scan command.</div>
+          <div class="c-gray">NMAP-X Backend connected — waiting for scan command.</div>
         </div>
       </div>
 
@@ -621,6 +637,202 @@
 
     </div><!-- /page-my-system -->
 
+
+    <!-- ═══════════════════════════════════════════════════
+         PAGE: BACKUP FILE
+    ════════════════════════════════════════════════════ -->
+    <div id="page-backup" class="page">
+
+      <div class="sys-tabbar">
+        <button class="bk-tab active" data-bktab="encrypt">🔐 Encrypt &amp; Backup</button>
+        <button class="bk-tab" data-bktab="decrypt">🔓 Decrypt &amp; Restore</button>
+        <button class="bk-tab" data-bktab="keystore">🗝 Key Store</button>
+        <div style="flex:1"></div>
+        <span class="bk-status-pill" id="bkStatusPill"></span>
+      </div>
+
+      <!-- Encrypt Tab -->
+      <!-- ── ENCRYPT TAB ── -->
+      <div id="bktab-encrypt" class="bktab active">
+        <div class="bk-two-col">
+          <div class="bk-card">
+            <div class="bk-card-title">📁 Select File(s) to Encrypt</div>
+
+            <!-- Drop Zone -->
+            <div class="bk-dropzone" id="bkDropzone">
+              <div class="bk-drop-icon">📂</div>
+              <div class="bk-drop-text">Drag &amp; drop files here</div>
+              <div class="bk-drop-sub">or</div>
+              <div style="display:flex;gap:8px;justify-content:center;margin-top:8px">
+                <button class="btn-secondary" id="bkPickFileBtn">Choose File(s)</button>
+                <button class="btn-secondary" id="bkPickFolderBtn">Choose Folder</button>
+              </div>
+              <input type="file" id="bkFilePicker" style="display:none" multiple>
+              <input type="file" id="bkFolderPicker" style="display:none" webkitdirectory>
+            </div>
+
+            <!-- Selected files preview -->
+            <div class="bk-file-list" id="bkFileList" style="display:none">
+              <div class="bk-file-list-header">
+                <span id="bkFileCount">0 files selected</span>
+                <button class="ks-action-btn" id="bkClearFiles">✕ Clear</button>
+              </div>
+              <div id="bkFileItems"></div>
+            </div>
+
+            <div class="bk-field" style="margin-top:14px">
+              <label class="bk-label">Key Name <span class="bk-hint">(saved in Key Store)</span></label>
+              <input type="text" id="bkKeyName" class="bk-input" placeholder="e.g. my-docs-2025">
+            </div>
+            <div class="bk-field">
+              <label class="bk-label">🔑 Master Password <span class="bk-hint">(protects the key)</span></label>
+              <div class="bk-pass-wrap">
+                <input type="password" id="bkPassword" class="bk-input" placeholder="Min 8 characters">
+                <button class="bk-eye" id="bkPassEye">👁</button>
+              </div>
+              <div class="bk-pass-strength"><div class="bk-strength-bar" id="bkStrengthBar"></div></div>
+              <span class="bk-hint" id="bkStrengthLabel"></span>
+            </div>
+            <div class="bk-field">
+              <label class="bk-label">Confirm Password</label>
+              <input type="password" id="bkPasswordConfirm" class="bk-input" placeholder="Re-enter password">
+            </div>
+            <button class="bk-action-btn" id="bkEncryptBtn">🔐 Encrypt &amp; Backup Now</button>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <div class="bk-card bk-info-card">
+              <div class="bk-card-title">🛡 How It Works</div>
+              <div class="bk-how-step"><span class="bk-step-num">1</span> Select your file(s) — saved to <code>encrypted_files/</code></div>
+              <div class="bk-how-step"><span class="bk-step-num">2</span> A random <b>AES-256</b> key is generated</div>
+              <div class="bk-how-step"><span class="bk-step-num">3</span> File encrypted with <b>AES-256-GCM</b></div>
+              <div class="bk-how-step"><span class="bk-step-num">4</span> Key wrapped by your password via <b>PBKDF2</b></div>
+              <div class="bk-how-step"><span class="bk-step-num">5</span> Encrypted key saved to <code>keystore/</code></div>
+              <div class="bk-how-step"><span class="bk-step-num">6</span> Key is <b>one-time use</b> — auto-deletes after restore</div>
+            </div>
+            <div class="bk-card" style="flex:1">
+              <div class="bk-card-title">📋 Operation Log</div>
+              <div class="bk-log" id="bkEncLog"><span class="bk-log-idle">Ready — waiting for operation…</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── DECRYPT TAB ── -->
+      <div id="bktab-decrypt" class="bktab">
+        <div class="bk-two-col">
+          <div class="bk-card">
+            <div class="bk-card-title">🔓 Restore Encrypted Backup</div>
+
+            <!-- Drop Zone for .bkenc -->
+            <div class="bk-dropzone" id="bkDecDropzone">
+              <div class="bk-drop-icon">🔒</div>
+              <div class="bk-drop-text">Drop your <code>.bkenc</code> file here</div>
+              <div class="bk-drop-sub">or</div>
+              <button class="btn-secondary" id="bkDecPickBtn" style="margin-top:8px">Choose .bkenc File</button>
+              <input type="file" id="bkDecFilePicker" style="display:none" accept=".bkenc">
+            </div>
+
+            <!-- Selected .bkenc preview -->
+            <div class="bk-file-list" id="bkDecFileList" style="display:none">
+              <div class="bk-file-list-header">
+                <span id="bkDecFileName">No file selected</span>
+                <button class="ks-action-btn" id="bkDecClearFile">✕</button>
+              </div>
+            </div>
+
+            <div class="bk-field" style="margin-top:14px">
+              <label class="bk-label">Key Name <span class="bk-hint">(from Key Store)</span></label>
+              <div style="display:flex;gap:8px">
+                <input type="text" id="bkDecKeyName" class="bk-input" placeholder="e.g. my-docs-2025">
+                <button class="btn-secondary" style="white-space:nowrap" id="bkLoadKeysBtn">📋 Keys</button>
+              </div>
+            </div>
+            <div class="bk-field">
+              <label class="bk-label">🔑 Master Password</label>
+              <div class="bk-pass-wrap">
+                <input type="password" id="bkDecPassword" class="bk-input" placeholder="Your password">
+                <button class="bk-eye" id="bkDecPassEye">👁</button>
+              </div>
+            </div>
+            <button class="bk-action-btn bk-decrypt-btn" id="bkDecryptBtn">🔓 Decrypt &amp; Restore Now</button>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <div class="bk-card" style="flex:1">
+              <div class="bk-card-title">📋 Operation Log</div>
+              <div class="bk-log" id="bkDecLog"><span class="bk-log-idle">Ready — waiting for operation…</span></div>
+            </div>
+            <div class="bk-warn-box">
+              ⚠ You need the <code>.bkenc</code> file <b>and</b> your password to restore.<br>
+              Restored files are saved to <code>restored/</code> folder on the server.<br>
+              The key auto-deletes after successful decryption.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Key Store Tab -->
+      <div id="bktab-keystore" class="bktab">
+        <div class="bk-card" style="margin-bottom:16px">
+          <div class="bk-card-title" style="display:flex;justify-content:space-between;align-items:center">
+            <span>🗝 Stored Keys</span>
+            <div style="display:flex;gap:8px">
+              <div class="search-box" style="width:200px">
+                <span>⌕</span>
+                <input type="text" id="ksSearch" placeholder="Search keys…">
+              </div>
+              <button class="btn-secondary" id="ksRefreshBtn">⟳ Refresh</button>
+            </div>
+          </div>
+          <div class="table-wrap" style="margin-top:12px">
+            <table>
+              <thead><tr><th>KEY NAME</th><th>CREATED</th><th>ALGORITHM</th><th>SOURCE FILE</th><th>ACTIONS</th></tr></thead>
+              <tbody id="ksTableBody">
+                <tr><td colspan="5" class="tbl-empty">No keys found — encrypt a file first</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="bk-two-col">
+          <div class="bk-card bk-info-card">
+            <div class="bk-card-title">📂 Key Store Location</div>
+            <div class="bk-field">
+              <label class="bk-label">Key Store folder path</label>
+              <input type="text" id="ksPathInput" class="bk-input" value="keystore/" readonly>
+            </div>
+            <div class="bk-warn-box">Keys are stored <b>encrypted</b> — your password is never saved. Move the <code>keystore/</code> folder to a USB drive for maximum security.</div>
+          </div>
+          <div class="bk-card bk-info-card">
+            <div class="bk-card-title">🛡 Key Security Model</div>
+            <div class="bk-how-step"><span class="bk-step-num">🔑</span> AES-256 random key per file</div>
+            <div class="bk-how-step"><span class="bk-step-num">🔐</span> Key wrapped with PBKDF2-SHA256 (100k rounds)</div>
+            <div class="bk-how-step"><span class="bk-step-num">🧂</span> Random salt — no two keys are alike</div>
+            <div class="bk-how-step"><span class="bk-step-num">🚫</span> Password never stored anywhere</div>
+            <div class="bk-how-step"><span class="bk-step-num">📦</span> Key file format: <code>.bkkey</code> JSON</div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /page-backup -->
+
+    <!-- Delete Key Modal -->
+    <div class="modal-overlay" id="ksDeleteModal" style="display:none">
+      <div class="modal" style="max-width:420px">
+        <div class="modal-header">
+          <h3>🗑 Delete Key</h3>
+          <button class="modal-close" id="ksDeleteClose">✕</button>
+        </div>
+        <div style="padding:20px;color:var(--muted)">
+          Delete key <b id="ksDeleteKeyName" style="color:var(--red)"></b>?<br><br>
+          ⚠ The encrypted backup will be <b>permanently unrestorable</b>.
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" id="ksDeleteCancel">Cancel</button>
+          <button class="bk-action-btn bk-delete-btn" id="ksDeleteConfirm" style="width:auto;padding:8px 20px">Delete Key</button>
+        </div>
+      </div>
+    </div>
 
     <footer>
       <span>BlueStrike FRONTEND v1.0</span>
