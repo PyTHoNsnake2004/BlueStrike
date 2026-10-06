@@ -812,42 +812,113 @@ def _read_file(path: str, default: str = "0") -> str:
 
 def get_cpu_info() -> Dict:
     try:
-        # Usage: read /proc/stat twice 0.3 s apart
+        # ── Usage: read /proc/stat twice 0.3s apart ──────────────
         def _stat():
             line = open('/proc/stat').readline().split()
             total = sum(int(x) for x in line[1:])
-            idle  = int(line[4])
+            idle  = int(line[4]) + int(line[5])   # idle + iowait
             return total, idle
 
         t1, i1 = _stat()
-        time.sleep(0.3)
+        time.sleep(0.35)
         t2, i2 = _stat()
         dt, di = t2 - t1, i2 - i1
         usage = round((1 - di / dt) * 100, 1) if dt else 0.0
 
-        # Frequency
-        freq_khz = _read_file('/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq', '0')
-        freq_mhz = round(int(freq_khz) / 1000) if freq_khz.isdigit() else 0
+        # ── Frequency: try multiple paths ─────────────────────────
+        freq_mhz = 0
+        freq_paths = [
+            '/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq',
+            '/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq',
+            '/sys/devices/system/cpu/cpufreq/policy0/scaling_cur_freq',
+        ]
+        for fp in freq_paths:
+            val = _read_file(fp, '0').strip()
+            if val.isdigit() and int(val) > 0:
+                freq_mhz = round(int(val) / 1000)
+                break
 
-        # Temperature
+        # Fallback: parse /proc/cpuinfo MHz field
+        if freq_mhz == 0:
+            try:
+                with open('/proc/cpuinfo') as f:
+                    for line in f:
+                        if 'cpu mhz' in line.lower():
+                            freq_mhz = round(float(line.split(':')[1].strip()))
+                            break
+            except Exception:
+                pass
+
+        # ── Temperature: try all known Intel/AMD paths ────────────
         temp = 0.0
-        for path in glob.glob('/sys/class/thermal/thermal_zone*/temp'):
-            raw = _read_file(path, '0')
-            if raw.isdigit():
-                t = int(raw) / 1000
+
+        # Method 1: hwmon (most reliable on modern kernels)
+        for hwmon in sorted(glob.glob('/sys/class/hwmon/hwmon*/temp*_input')):
+            try:
+                raw = int(open(hwmon).read().strip())
+                t = raw / 1000.0
                 if 20 < t < 120:
                     temp = round(t, 1)
                     break
+            except Exception:
+                continue
 
-        # Core count
+        # Method 2: thermal_zone (fallback)
+        if temp == 0.0:
+            best = 0.0
+            for path in glob.glob('/sys/class/thermal/thermal_zone*/temp'):
+                try:
+                    type_path = path.replace('/temp', '/type')
+                    zone_type = _read_file(type_path, '').lower()
+                    raw = _read_file(path, '0').strip()
+                    if not raw.isdigit():
+                        continue
+                    t = int(raw) / 1000.0
+                    if not (20 < t < 120):
+                        continue
+                    # Prefer x86_pkg_temp or acpitz
+                    if 'pkg' in zone_type or 'cpu' in zone_type:
+                        temp = round(t, 1)
+                        break
+                    if t > best:
+                        best = t
+                except Exception:
+                    continue
+            if temp == 0.0 and best > 0:
+                temp = round(best, 1)
+
+        # Method 3: sensors command
+        if temp == 0.0:
+            try:
+                r = subprocess.run(['sensors', '-j'], capture_output=True, text=True, timeout=4)
+                if r.returncode == 0:
+                    import json as _json
+                    sdata = _json.loads(r.stdout)
+                    for chip in sdata.values():
+                        for feat in chip.values():
+                            if isinstance(feat, dict):
+                                for k, v in feat.items():
+                                    if 'temp' in k.lower() and 'input' in k.lower():
+                                        if isinstance(v, (int, float)) and 20 < v < 120:
+                                            temp = round(float(v), 1)
+                                            break
+                            if temp: break
+                        if temp: break
+            except Exception:
+                pass
+
+        # ── Core count ────────────────────────────────────────────
         cores = 0
         try:
             result = subprocess.run(['nproc'], capture_output=True, text=True, timeout=3)
             cores = int(result.stdout.strip())
         except Exception:
-            pass
+            try:
+                cores = len([l for l in open('/proc/cpuinfo').readlines() if l.startswith('processor')])
+            except Exception:
+                pass
 
-        # Model
+        # ── Model ─────────────────────────────────────────────────
         model = 'Unknown'
         try:
             with open('/proc/cpuinfo') as f:
@@ -859,11 +930,11 @@ def get_cpu_info() -> Dict:
             pass
 
         return {
-            'usage': usage,
+            'usage':    usage,
             'freq_mhz': freq_mhz,
-            'temp_c': temp,
-            'cores': cores,
-            'model': model,
+            'temp_c':   temp,
+            'cores':    cores,
+            'model':    model,
         }
     except Exception as e:
         return {'usage': 0, 'freq_mhz': 0, 'temp_c': 0, 'cores': 0, 'model': 'Unknown', 'error': str(e)}
@@ -1008,35 +1079,165 @@ def get_running_services() -> List[Dict]:
             return []
 
 
+def _safe_float(s: str) -> float:
+    """Parse float safely, return 0 on failure."""
+    try:
+        return float(s.strip().replace(',', '.'))
+    except Exception:
+        return 0.0
+
+
 def get_gpu_info() -> Dict:
-    """Try nvidia-smi, then fallback to /sys."""
+    """Detect GPU via nvidia-smi → intel_gpu_top → /sys DRM → glxinfo fallback."""
+
+    # ── NVIDIA via nvidia-smi ─────────────────────────────────
     try:
         r = subprocess.run(
-            ['nvidia-smi', '--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw',
+            ['nvidia-smi',
+             '--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw',
              '--format=csv,noheader,nounits'],
             capture_output=True, text=True, timeout=5
         )
-        if r.returncode == 0:
+        if r.returncode == 0 and r.stdout.strip():
             parts = r.stdout.strip().split(',')
-            return {
-                'name': parts[0].strip(),
-                'temp_c': float(parts[1].strip()) if parts[1].strip().replace('.','').isdigit() else 0,
-                'usage_pct': float(parts[2].strip()) if parts[2].strip().replace('.','').isdigit() else 0,
-                'mem_used_mb': float(parts[3].strip()) if parts[3].strip().replace('.','').isdigit() else 0,
-                'mem_total_mb': float(parts[4].strip()) if parts[4].strip().replace('.','').isdigit() else 0,
-                'power_w': float(parts[5].strip()) if parts[5].strip().replace('.','').isdigit() else 0,
-                'source': 'nvidia-smi',
-            }
+            if len(parts) >= 6:
+                return {
+                    'name':         parts[0].strip(),
+                    'temp_c':       _safe_float(parts[1]),
+                    'usage_pct':    _safe_float(parts[2]),
+                    'mem_used_mb':  _safe_float(parts[3]),
+                    'mem_total_mb': _safe_float(parts[4]),
+                    'power_w':      _safe_float(parts[5]),
+                    'source':       'nvidia-smi',
+                }
     except Exception:
         pass
-    # Fallback: integrated/unknown
+
+    # ── Intel integrated GPU via /sys DRM ────────────────────
+    gpu_name  = ''
+    gpu_temp  = 0.0
+    gpu_usage = 0.0
+    gpu_mem   = 0.0
+
+    # Get GPU name from DRM
+    for card in sorted(glob.glob('/sys/class/drm/card*/device/uevent')):
+        try:
+            content_drm = open(card).read()
+            for line in content_drm.split('\n'):
+                if 'DRIVER=' in line:
+                    gpu_name = line.split('=')[1].strip()
+                if 'PCI_ID=' in line:
+                    gpu_name = f'Intel GPU ({line.split("=")[1].strip()})'
+        except Exception:
+            pass
+        if gpu_name:
+            break
+
+    # Intel GPU name from lspci
+    if not gpu_name:
+        try:
+            r = subprocess.run(['lspci'], capture_output=True, text=True, timeout=4)
+            for line in r.stdout.split('\n'):
+                if 'VGA' in line or 'Display' in line or '3D' in line:
+                    gpu_name = line.split(':', 2)[-1].strip()
+                    break
+        except Exception:
+            pass
+
+    # Intel GPU temperature from hwmon
+    for hwmon in sorted(glob.glob('/sys/class/hwmon/hwmon*/name')):
+        try:
+            hname = open(hwmon).read().strip()
+            if 'i915' in hname or 'gpu' in hname.lower() or 'amdgpu' in hname:
+                base  = hwmon.replace('/name', '')
+                for tf in glob.glob(f'{base}/temp*_input'):
+                    raw_t = int(open(tf).read().strip())
+                    t = raw_t / 1000.0
+                    if 20 < t < 120:
+                        gpu_temp = round(t, 1)
+                        break
+        except Exception:
+            continue
+
+    # Intel GPU usage from i915 sysfs (render engine busy %)
+    for busy in glob.glob('/sys/class/drm/card*/gt/gt*/engine/rcs0/busy'):
+        try:
+            gpu_usage = round(float(open(busy).read().strip()), 1)
+            break
+        except Exception:
+            pass
+
+    # Intel GPU VRAM (stolen memory)
+    for mem_file in glob.glob('/sys/class/drm/card*/gt_cur_freq_mhz'):
+        # this gives freq — use it as proxy indicator
+        pass
+    for mem_file in glob.glob('/sys/kernel/debug/dri/*/i915_gem_objects'):
+        try:
+            txt = open(mem_file).read()
+            for line in txt.split('\n'):
+                if 'total' in line.lower():
+                    nums = [int(s) for s in line.split() if s.isdigit()]
+                    if nums:
+                        gpu_mem = round(nums[0] / 1024 / 1024, 1)
+                        break
+        except Exception:
+            pass
+
+    # If we found any info, return Intel GPU data
+    if gpu_name or gpu_temp or gpu_usage:
+        return {
+            'name':         gpu_name or 'Intel Integrated GPU',
+            'temp_c':       gpu_temp,
+            'usage_pct':    gpu_usage,
+            'mem_used_mb':  gpu_mem,
+            'mem_total_mb': 0,
+            'power_w':      0,
+            'source':       'intel-sysfs',
+        }
+
+    # ── AMD GPU via rocm-smi ──────────────────────────────────
     try:
-        with open('/proc/driver/nvidia/version') as f:
-            drv = f.readline().strip()
+        r = subprocess.run(['rocm-smi', '--showtemp', '--showuse', '--showmemuse',
+                            '--showpower', '--csv'],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip():
+            lines = r.stdout.strip().split('\n')
+            if len(lines) >= 2:
+                hdrs = [h.strip().lower() for h in lines[0].split(',')]
+                vals = [v.strip() for v in lines[1].split(',')]
+                row  = dict(zip(hdrs, vals))
+                return {
+                    'name':         row.get('device', 'AMD GPU'),
+                    'temp_c':       _safe_float(row.get('temperature (c)', '0')),
+                    'usage_pct':    _safe_float(row.get('gpu use (%)', '0')),
+                    'mem_used_mb':  _safe_float(row.get('gpu memory use (%)', '0')),
+                    'mem_total_mb': 0,
+                    'power_w':      _safe_float(row.get('avg power (w)', '0')),
+                    'source':       'rocm-smi',
+                }
     except Exception:
-        drv = 'Unknown / Integrated'
-    return {'name': drv, 'temp_c': 0, 'usage_pct': 0,
-            'mem_used_mb': 0, 'mem_total_mb': 0, 'power_w': 0, 'source': 'proc'}
+        pass
+
+    # ── Final fallback ────────────────────────────────────────
+    name = 'Unknown / Integrated'
+    try:
+        r = subprocess.run(['lspci'], capture_output=True, text=True, timeout=3)
+        for line in r.stdout.split('\n'):
+            if 'VGA' in line or 'Display' in line:
+                name = line.split(':', 2)[-1].strip()
+                break
+    except Exception:
+        pass
+
+    return {
+        'name':         name,
+        'temp_c':       0,
+        'usage_pct':    0,
+        'mem_used_mb':  0,
+        'mem_total_mb': 0,
+        'power_w':      0,
+        'source':       'fallback',
+    }
 
 
 # ── Watch for scan-related events and log them ────────────────
